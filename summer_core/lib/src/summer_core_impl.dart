@@ -1,7 +1,7 @@
-class Di {
+class Summer {
   final Function<T>() resolver;
 
-  const Di(this.resolver);
+  const Summer(this.resolver);
 
   T call<T>() {
     return resolver<T>();

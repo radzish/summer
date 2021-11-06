@@ -15,6 +15,7 @@ dependencies:
   built_value:
   built_collection:
   build_runner_core:
+  dart_style:
   summer_core:
     path: ../summer_core
 

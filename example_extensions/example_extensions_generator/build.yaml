@@ -1,0 +1,17 @@
+builders:
+
+  timedBuilder:
+    import: "package:example_extensions_generator/example_extensions_generator.dart"
+    builder_factories: ["timedBuilder"]
+    build_extensions: {"^lib/{{}}.dart": ["lib/generated/{{}}.timed.dart"]}
+    build_to: source
+    auto_apply: root_package
+    runs_before: ["summer"]
+
+  paramLoggedBuilder:
+    import: "package:example_extensions_generator/example_extensions_generator.dart"
+    builder_factories: ["paramLoggedBuilder"]
+    build_extensions: {"^lib/{{}}.dart": ["lib/generated/{{}}.paramLogged.dart"]}
+    build_to: source
+    auto_apply: root_package
+    runs_before: ["summer"]

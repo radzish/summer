@@ -17,8 +17,14 @@ class ComponentB {
 
   @timed
   @paramLogged
-  void doComponentBJob(String param) {
-    print('component B job: $param');
+  void doComponentB0Job(String param) {
+    print('component B0 job: $param');
     componentA.doComponentAJob();
+  }
+
+  @paramLogged
+  @timed
+  void doComponentB1Job(String param) {
+    print('component B1 job: $param');
   }
 }

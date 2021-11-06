@@ -1,145 +1,200 @@
 import 'dart:async';
-import 'dart:mirrors';
 
 import 'package:analyzer/dart/element/element.dart';
 import 'package:build/build.dart';
-import 'package:build_runner_core/build_runner_core.dart';
-import 'package:built_collection/built_collection.dart';
-import 'package:code_builder/code_builder.dart' as code;
 import 'package:glob/glob.dart';
 import 'package:source_gen/source_gen.dart';
-import 'package:summer_core/summer_core.dart';
-import 'package:summer_generator/src/summer_generator_api.dart';
+import 'package:summer_generator/summer_generator.dart';
 
-final _applicationAnnotationChecker = TypeChecker.fromRuntime(Application);
-final _componentAnnotationChecker = TypeChecker.fromRuntime(Component);
-final _builderInterfaceChecker = TypeChecker.fromRuntime(SummerExtensionBuilder);
+import 'package:collection/collection.dart' show IterableExtension;
 
-class SummerGenerator extends Generator {
-  final Set<SummerExtensionBuilder> _extensionBuilders = {};
+class SummerBuilder implements Builder {
+  @override
+  Future build(BuildStep buildStep) async {
+    final assets = await buildStep
+        .findAssets(Glob("lib/**"))
+        //TODO seems like IDEA appends '~' in the process of updating file in 'watch' mode - need to skip those
+        //think of better approach
+        .where((asset) => !asset.path.endsWith("~"))
+        .toList();
+    final libraries = await Future.wait(assets.map((asset) => buildStep.resolver.libraryFor(asset)));
+
+    final componentLibraries =
+        libraries.where((library) => LibraryReader(library).annotatedWith(componentChecker).isNotEmpty);
+
+    final generatedAssets = await buildStep.findAssets(Glob("lib/generated/**")).toList();
+    final generatedLibraries = await Future.wait(generatedAssets.map((asset) => buildStep.resolver.libraryFor(asset)));
+
+    final imports = {
+      "import 'package:summer_core/summer_core.dart';",
+      ..._generateImports(generatedLibraries),
+      ..._generateImports(componentLibraries),
+    };
+    final components = await _generateComponentImpls(libraries, generatedLibraries);
+    final summerInstance = _generateSummerInstance(components);
+
+    var code = '''
+    ${imports.join('\n')}
+    
+    ${components.map((component) => component.implCode).join('\n\n')}
+    
+    $summerInstance
+    ''';
+
+    code = formatter.format(code);
+
+    await buildStep.writeAsString(AssetId(buildStep.inputId.package, 'lib/generated/summer.dart'), code);
+  }
 
   @override
-  FutureOr<String?> generate(LibraryReader library, BuildStep buildStep) async {
-    if (_isApplication(library)) {
-      final assets =
-          await buildStep.findAssets(Glob("*", recursive: true)).where((asset) => asset.extension == ".dart").toList();
-      final librariesElements =
-          await Future.wait(assets.map((asset) => buildStep.resolver.libraryFor(asset, allowSyntaxErrors: true)));
-      final libraries =
-          librariesElements.map((element) => LibraryReader(element)).where((element) => element != library).toList();
+  final buildExtensions = const {
+    r'$lib$': ['generated/summer.dart']
+  };
 
-      await _initExtensionBuilders(buildStep);
-
-      return await _generate(library, libraries, buildStep);
-    }
-
-    return null;
+  Iterable<String> _generateImports(Iterable<LibraryElement> libraries) {
+    return libraries.map((library) => "import '${library.librarySource.uri}';");
   }
 
-  bool _isApplication(LibraryReader library) => library.annotatedWith(_applicationAnnotationChecker).isNotEmpty;
-
-  Future<String> _generate(
-    LibraryReader applicationLibrary,
-    List<LibraryReader> otherLibraries,
-    BuildStep buildStep,
+  Future<Iterable<_ComponentImplementationResult>> _generateComponentImpls(
+    Iterable<LibraryElement> libraries,
+    Iterable<LibraryElement> generatedLibraries,
   ) async {
-    final result = StringBuffer();
-
-    final classImplementationsMap = <ClassElement, code.Class>{};
-
-    final componentElements = otherLibraries
-        .expand((library) =>
-            library.annotatedWith(_componentAnnotationChecker).map((annotatedElement) => annotatedElement.element))
-        .cast<ClassElement>();
-
-    for (final componentElement in componentElements) {
-      final extensionMixins = _generateComponentExtensionMixins(componentElement);
-      final componentClass = _generateComponentClass(componentElement, extensionMixins);
-
-      result.writeln(_serializeSpec(componentClass));
-      result.writeln("\n");
-
-      for (final extensionMixin in extensionMixins) {
-        result.writeln(_serializeSpec(extensionMixin));
-        result.writeln("\n");
-      }
-    }
-
-    result.writeln(_generateDi(classImplementationsMap));
-
-    return result.toString();
-  }
-
-  Iterable<code.Mixin> _generateComponentExtensionMixins(ClassElement component) =>
-      component.methods.expand((method) => _generateMethodExtensionMixins(component, method));
-
-  Iterable<code.Mixin> _generateMethodExtensionMixins(ClassElement component, MethodElement method) {
-    return _extensionBuilders
-        .map((builder) => builder.generate(component, method))
-        .where((mixin) => mixin != null)
-        .cast();
-  }
-
-  code.Class _generateComponentClass(ClassElement componentElement, Iterable<code.Mixin> mixins) {
-    return code.Class(
-      (b) => b
-        ..name = "_${componentElement.name}"
-        ..extend = code.refer(componentElement.name)
-        ..mixins = ListBuilder(mixins.map((mixin) => code.refer(mixin.name)))
-      //
-      ,
+    return libraries
+        .map((library) => LibraryReader(library))
+        .expand((reader) => reader.annotatedWith(componentChecker))
+        .map((annotatedComponent) => annotatedComponent.element as ClassElement)
+        .map(
+      (component) {
+        final name = component.name;
+        final implName = '\$${component.name}';
+        final sourceCode = _generateComponentImplDeclaration(component, name, implName, generatedLibraries);
+        final dependencies = _resolveComponentDependencies(component);
+        return _ComponentImplementationResult(name, implName, sourceCode, dependencies);
+      },
     );
   }
 
-  String _generateDi(Map<ClassElement, code.Class> classImplementationsMap) {
-    return "";
-  }
+  String _generateComponentImplDeclaration(
+    ClassElement component,
+    String name,
+    String implName,
+    Iterable<LibraryElement> generatedLibraries,
+  ) {
+    final mixins = _generateComponentImplMixins(component, generatedLibraries);
+    final constructor = _generateComponentImplConstructor(component);
 
-  String _serializeSpec(code.Spec codeSpec) => codeSpec.accept(code.DartEmitter()).toString();
-
-  Future<void> _initExtensionBuilders(BuildStep buildStep) async {
-    final packageGraph = await PackageGraph.forThisPackage();
-    final assetReader = FileBasedAssetReader(packageGraph);
-
-    for (final package in packageGraph.allPackages.keys) {
-      // we need this as a marker that this package has summer generators
-      final configAssets =
-          await assetReader.findAssets(Glob("summer_extension_generator.yaml"), package: package).toList();
-      if (configAssets.isEmpty) {
-        continue;
-      }
-
-      final dartAssets = await assetReader
-          .findAssets(Glob("*", recursive: true), package: package)
-          .where((asset) => asset.extension == ".dart")
-          .toList();
-
-      for (final dartAsset in dartAssets) {
-        final library = await buildStep.resolver.libraryFor(dartAsset);
-        final libraryReader = LibraryReader(library);
-
-        final builderElements = libraryReader.allElements.where((element) {
-          final isClass = element is ClassElement;
-          if (!isClass) {
-            return false;
-          }
-
-          return (element as ClassElement)
-              .interfaces
-              .any((interface) => _builderInterfaceChecker.isAssignableFromType(interface));
-        });
-
-        final libraryMirror = await currentMirrorSystem().isolate.loadUri(Uri.parse(library.identifier));
-
-        final libraryBuilders = builderElements.map(
-          (builderElement) {
-            final builderMirror = libraryMirror.declarations[Symbol(builderElement.name!)] as ClassMirror;
-            return builderMirror.newInstance(Symbol.empty, []).reflectee as SummerExtensionBuilder;
-          },
-        );
-
-        _extensionBuilders.addAll(libraryBuilders);
-      }
+    return '''
+    class $implName extends $name ${mixins.isNotEmpty ? ' with ${mixins.join(', ')}' : ''} {
+      ${constructor.isNotEmpty ? constructor : ''}
     }
+    ''';
   }
+
+  Iterable<String> _generateComponentImplMixins(ClassElement component, Iterable<LibraryElement> mixinLibraries) =>
+      component.methods
+          .where((method) => method.metadata.isNotEmpty)
+          .expand((method) => _generateMethodMixins(component, method, mixinLibraries));
+
+  Iterable<String> _generateMethodMixins(
+    ClassElement component,
+    MethodElement method,
+    Iterable<LibraryElement> mixinLibraries,
+  ) =>
+      method
+          .metadata
+          // we want outer params to be executed first
+          .reversed
+          .map((annotation) => _generateMethodMixin(component, method, annotation, mixinLibraries))
+          .whereType<String>();
+
+  String? _generateMethodMixin(
+    ClassElement component,
+    MethodElement method,
+    ElementAnnotation annotation,
+    Iterable<LibraryElement> mixinLibraries,
+  ) {
+    //TODO: think of optimization, we can resolve component mixins once and put them into map
+    final componentMixins = mixinLibraries
+        .expand((library) => LibraryReader(library).allElements)
+        .whereType<ClassElement>()
+        .where((clazz) => clazz.isMixin && clazz.superclassConstraints.contains(component.thisType));
+
+    final methodMixin = componentMixins.firstWhereOrNull(
+      (mixin) =>
+          mixin.name.endsWith('_${method.name}') &&
+          mixin.metadata
+              .any((mixinAnnotation) => mixinAnnotation.computeConstantValue() == annotation.computeConstantValue()),
+    );
+
+    return methodMixin?.name;
+  }
+
+  String _generateComponentImplConstructor(ClassElement component) {
+    final constructors = component.constructors;
+
+    //TODO: should we support multiple constructors
+    if (constructors.length > 1) {
+      throw UnsupportedError("component must have one constructor max");
+    }
+
+    final constructor = constructors.first;
+
+    // default constructor - we do not need to generate anything
+    if (constructor.parameters.isEmpty) {
+      return '';
+    }
+
+    //TODO: should we support named constructors?
+    return '\$${component.name}(${_parameterDeclarations(constructor)}): super(${_parameterNames(constructor)});';
+  }
+
+  String _parameterDeclarations(ConstructorElement constructor) =>
+      constructor.parameters.map((parameter) => parameter.getDisplayString(withNullability: true)).join(', ');
+
+  String _parameterNames(ConstructorElement constructor) =>
+      constructor.parameters.map((parameter) => parameter.name).join(', ');
+
+  List<String> _resolveComponentDependencies(ClassElement component) {
+    final constructors = component.constructors;
+
+    //TODO: should we support multiple constructors
+    if (constructors.length > 1) {
+      throw UnsupportedError("component must have one constructor max");
+    }
+
+    final constructor = constructors.first;
+
+    // default constructor - we do not need to generate anything
+    if (constructor.parameters.isEmpty) {
+      return [];
+    }
+
+    return constructor.parameters.map((param) => param.type.getDisplayString(withNullability: true)).toList();
+  }
+
+  String _generateSummerInstance(Iterable<_ComponentImplementationResult> componentResults) {
+    final cases = componentResults.map(_generateSummerDeclarationComponentCase).join('\n');
+    return '''
+      final summer = Summer(<T>() {
+        switch(T) {
+          $cases
+        }
+      });
+    ''';
+  }
+
+  String _generateSummerDeclarationComponentCase(_ComponentImplementationResult componentResult) =>
+      'case ${componentResult.name}: return ${_generateSummerDeclarationComponentInstance(componentResult)};';
+
+  String _generateSummerDeclarationComponentInstance(_ComponentImplementationResult componentResult) =>
+      '${componentResult.implName}(${componentResult.dependencies.map((dependency) => 'summer<$dependency>()').join(', ')})';
+}
+
+class _ComponentImplementationResult {
+  final String name;
+  final String implName;
+  final String implCode;
+  final List<String> dependencies;
+
+  _ComponentImplementationResult(this.name, this.implName, this.implCode, this.dependencies);
 }
