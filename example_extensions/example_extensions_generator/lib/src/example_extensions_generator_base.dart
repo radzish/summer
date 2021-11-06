@@ -1,29 +1,12 @@
-
 import 'package:analyzer/dart/element/element.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:code_builder/code_builder.dart';
 import 'package:code_builder/code_builder.dart' as code;
-import 'package:example_extensions_lib/example_extensions_lib.dart';
-import 'package:source_gen/source_gen.dart';
 import 'package:summer_generator/summer_generator.dart';
 
-final _componentAnnotationChecker = TypeChecker.fromRuntime(Timed);
-
-class TimedBuilder implements SummerExtensionBuilder {
-  bool _isTimed(MethodElement method) {
-    return method.metadata.any((annotation) {
-      return annotation.toString().contains("@Timed");
-      // TODO: this does not work as looks like TypeChecker does not work properly when running from already reflected library
-      return _componentAnnotationChecker.isExactlyType(annotation.computeConstantValue()!.type!);
-    });
-  }
-
+class TimedGenerator extends AnnotatedMethodGenerator {
   @override
-  code.Mixin? generate(ClassElement clazz, MethodElement method) {
-    if (!_isTimed(method)) {
-      return null;
-    }
-
+  code.Library generate(ClassElement component, MethodElement method, String annotationName) {
     final superCall = code
         .refer("super.${method.displayName}")
         .call(
@@ -33,9 +16,11 @@ class TimedBuilder implements SummerExtensionBuilder {
         .statement;
 
     final statements = <code.Code>[
+      code.Code("print('timed ${component.name}.${method.name}: start');"),
       code.Code("final stopwatch = Stopwatch()..start();"),
       superCall,
-      code.Code("print('timed ComponentB.doComponentBJob: \${stopwatch.elapsed}');"),
+      code.Code("print('timed ${component.name}.${method.name}: \${stopwatch.elapsed}');"),
+      code.Code("print('timed ${component.name}.${method.name}: finish');"),
     ];
 
     final body = code.Block((b) => b..statements = ListBuilder(statements));
@@ -44,7 +29,7 @@ class TimedBuilder implements SummerExtensionBuilder {
       (b) => b
         ..name = method.name
         ..annotations = ListBuilder([code.CodeExpression(code.Code("override"))])
-        ..returns = code.Reference(method.returnType.getDisplayString(withNullability: true))
+        ..returns = code.refer(method.returnType.getDisplayString(withNullability: true))
         ..requiredParameters = ListBuilder(method.parameters
             .where((parameter) => parameter.isRequiredNamed || parameter.isRequiredPositional)
             .map(_buildParameter)
@@ -53,11 +38,20 @@ class TimedBuilder implements SummerExtensionBuilder {
         ..body = body,
     );
 
-    return code.Mixin(
+    //TODO: what if we return only imports and method body ??
+
+    return code.Library(
       (b) => b
-        ..name = "_${clazz.name}_timed_${method.name}"
-        ..on = code.refer(clazz.name)
-        ..methods = ListBuilder([mixinMethod]),
+        ..directives = ListBuilder([Directive.import("dart:math")])
+        ..body = ListBuilder([
+          code.Mixin(
+            (b) => b
+              //TODO: name should be generated outside
+              ..name = "\$${component.name}_${annotationName}_${method.name}"
+              ..on = code.refer(component.name)
+              ..methods = ListBuilder([mixinMethod]),
+          )
+        ]),
     );
   }
 
@@ -77,6 +71,82 @@ class TimedBuilder implements SummerExtensionBuilder {
   Parameter _buildParameter(ParameterElement e) {
     return code.Parameter(
       (b) => b
+        ..name = e.name
+        ..type = code.refer(e.type.getDisplayString(withNullability: true)),
+    );
+  }
+}
+
+class ParamLoggedGenerator extends AnnotatedMethodGenerator {
+  @override
+  code.Library generate(ClassElement component, MethodElement method, String annotationName) {
+    final superCall = code
+        .refer("super.${method.displayName}")
+        .call(
+      _buildMethodPositionalParamNames(method),
+      _buildMethodNamedParamNames(method),
+    )
+        .statement;
+
+    final statements = <code.Code>[
+      code.Code("print('paramLogged ${component.name}.${method.name}: start');"),
+      code.Code("print('${component.name}.${method.name} params: [${_buildMethodParamNames(method).map((param) => '\$param').join('|')}]');"),
+      superCall,
+      code.Code("print('paramLogged ${component.name}.${method.name}: finish');"),
+    ];
+
+    final body = code.Block((b) => b..statements = ListBuilder(statements));
+
+    final mixinMethod = code.Method(
+          (b) => b
+        ..name = method.name
+        ..annotations = ListBuilder([code.CodeExpression(code.Code("override"))])
+        ..returns = code.refer(method.returnType.getDisplayString(withNullability: true))
+        ..requiredParameters = ListBuilder(method.parameters
+            .where((parameter) => parameter.isRequiredNamed || parameter.isRequiredPositional)
+            .map(_buildParameter)
+            .toList())
+      //TODO: add support for optional parameters
+        ..body = body,
+    );
+
+    //TODO: what if we return only imports and method body ??
+
+    return code.Library(
+          (b) => b
+        ..directives = ListBuilder([Directive.import("dart:math")])
+        ..body = ListBuilder([
+          code.Mixin(
+                (b) => b
+            //TODO: name should be generated outside
+              ..name = "\$${component.name}_${annotationName}_${method.name}"
+              ..on = code.refer(component.name)
+              ..methods = ListBuilder([mixinMethod]),
+          )
+        ]),
+    );
+  }
+
+  Iterable<code.Expression> _buildMethodPositionalParamNames(FunctionTypedElement method) {
+    return method.parameters
+        .where((param) => param.isPositional)
+        .map((param) => code.refer(param.displayName).expression);
+  }
+
+  Iterable<String> _buildMethodParamNames(FunctionTypedElement method) {
+    return method.parameters.map((param) => param.name);
+  }
+
+  Map<String, code.Expression> _buildMethodNamedParamNames(FunctionTypedElement method) {
+    final paramNames = method.parameters.where((param) => param.isNamed).map((param) => param.displayName);
+    return {
+      for (var param in paramNames) param: code.refer(param).expression,
+    };
+  }
+
+  Parameter _buildParameter(ParameterElement e) {
+    return code.Parameter(
+          (b) => b
         ..name = e.name
         ..type = code.refer(e.type.getDisplayString(withNullability: true)),
     );
