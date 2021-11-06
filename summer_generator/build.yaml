@@ -1,0 +1,15 @@
+targets:
+  $default:
+    builders:
+      summer_generator|summer:
+        enabled: true
+
+builders:
+  summer:
+    target: ":summer_generator"
+    import: "package:summer_generator/summer_generator.dart"
+    builder_factories: [ "summer" ]
+    build_extensions: { ".dart": [ ".summer.g.part" ] }
+    auto_apply: dependents
+    build_to: source
+    applies_builders: [ "source_gen" ]

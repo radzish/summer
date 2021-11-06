@@ -1,0 +1,22 @@
+name: example_client
+description: A sample command-line application.
+version: 1.0.0
+# homepage: https://www.example.com
+
+environment:
+  sdk: '>=2.14.4 <3.0.0'
+
+dependencies:
+  summer_core:
+    path: ../summer_core
+  example_extensions_lib:
+    path: ../example_extensions/example_extensions_lib
+
+dev_dependencies:
+  lints: ^1.0.0
+  test: ^1.16.0
+  build_runner:
+  summer_generator:
+    path: ../summer_generator
+  example_extensions_generator:
+    path: ../example_extensions/example_extensions_generator

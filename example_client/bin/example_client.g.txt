@@ -1,0 +1,42 @@
+part of 'example1.dart';
+
+class _ComponentA extends ComponentA with _ComponentA_timed_doComponentAJob {}
+
+mixin _ComponentA_timed_doComponentAJob on ComponentA {
+  @override
+  void doComponentAJob() {
+    final stopwatch = Stopwatch()..start();
+    super.doComponentAJob();
+    print('timed ComponentA.doComponentAJob: ${stopwatch.elapsed}');
+  }
+}
+
+class _ComponentB extends ComponentB with _Component_timed_doComponentBJob, _Component_paramLogged_doComponentBJob {
+  _ComponentB(ComponentA componentA) : super(componentA);
+}
+
+mixin _Component_timed_doComponentBJob on ComponentB {
+  @override
+  void doComponentBJob(String params) {
+    final stopwatch = Stopwatch()..start();
+    super.doComponentBJob(params);
+    print('timed ComponentB.doComponentBJob: ${stopwatch.elapsed}');
+  }
+}
+
+mixin _Component_paramLogged_doComponentBJob on ComponentB {
+  @override
+  void doComponentBJob(String params) {
+    print('paramLogged ComponentB.doComponentBJob: ${[params]}');
+    super.doComponentBJob(params);
+  }
+}
+
+final di = Di(<T>() {
+  switch (T) {
+    case ComponentA:
+      return _ComponentA();
+    case ComponentB:
+      return _ComponentB(di<ComponentA>());
+  }
+});

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/example_client/example_client.iml" filepath="$PROJECT_DIR$/example_client/example_client.iml" />
+      <module fileurl="file://$PROJECT_DIR$/example_extensions/example_extensions_generator/example_extensions_generator.iml" filepath="$PROJECT_DIR$/example_extensions/example_extensions_generator/example_extensions_generator.iml" />
+      <module fileurl="file://$PROJECT_DIR$/example_extensions/example_extensions_lib/example_extensions_lib.iml" filepath="$PROJECT_DIR$/example_extensions/example_extensions_lib/example_extensions_lib.iml" />
+      <module fileurl="file://$PROJECT_DIR$/experiments/experiments.iml" filepath="$PROJECT_DIR$/experiments/experiments.iml" />
+      <module fileurl="file://$PROJECT_DIR$/summer.iml" filepath="$PROJECT_DIR$/summer.iml" />
+      <module fileurl="file://$PROJECT_DIR$/summer_core/summer_core.iml" filepath="$PROJECT_DIR$/summer_core/summer_core.iml" />
+      <module fileurl="file://$PROJECT_DIR$/summer_generator/summer_generator.iml" filepath="$PROJECT_DIR$/summer_generator/summer_generator.iml" />
+    </modules>
+  </component>
+</project>
