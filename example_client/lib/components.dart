@@ -12,6 +12,7 @@ class ComponentA {
 @component
 class ComponentB {
   final ComponentA componentA;
+  String? simpleField;
 
   ComponentB(this.componentA);
 
@@ -27,4 +28,23 @@ class ComponentB {
   void doComponentB1Job(String param) {
     print('component B1 job: $param');
   }
+}
+
+@component
+class ComponentC extends ComponentB {
+  ComponentC(ComponentA componentA) : super(componentA);
+
+  @timed
+  @paramLogged
+  void doComponentC0Job(String param) {
+    print('component C0 job: $param');
+  }
+}
+
+@component
+abstract class ComponentD extends ComponentC {
+  ComponentD(ComponentA componentA) : super(componentA);
+
+  @DbQuery("select * from table where id = @id")
+  void doComponentDJob(String id) {}
 }

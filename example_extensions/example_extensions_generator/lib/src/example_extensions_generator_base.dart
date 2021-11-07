@@ -83,14 +83,15 @@ class ParamLoggedGenerator extends AnnotatedMethodGenerator {
     final superCall = code
         .refer("super.${method.displayName}")
         .call(
-      _buildMethodPositionalParamNames(method),
-      _buildMethodNamedParamNames(method),
-    )
+          _buildMethodPositionalParamNames(method),
+          _buildMethodNamedParamNames(method),
+        )
         .statement;
 
     final statements = <code.Code>[
       code.Code("print('paramLogged ${component.name}.${method.name}: start');"),
-      code.Code("print('${component.name}.${method.name} params: [${_buildMethodParamNames(method).map((param) => '\$param').join('|')}]');"),
+      code.Code(
+          "print('${component.name}.${method.name} params: [${_buildMethodParamNames(method).map((param) => '\$param').join('|')}]');"),
       superCall,
       code.Code("print('paramLogged ${component.name}.${method.name}: finish');"),
     ];
@@ -98,7 +99,7 @@ class ParamLoggedGenerator extends AnnotatedMethodGenerator {
     final body = code.Block((b) => b..statements = ListBuilder(statements));
 
     final mixinMethod = code.Method(
-          (b) => b
+      (b) => b
         ..name = method.name
         ..annotations = ListBuilder([code.CodeExpression(code.Code("override"))])
         ..returns = code.refer(method.returnType.getDisplayString(withNullability: true))
@@ -106,19 +107,19 @@ class ParamLoggedGenerator extends AnnotatedMethodGenerator {
             .where((parameter) => parameter.isRequiredNamed || parameter.isRequiredPositional)
             .map(_buildParameter)
             .toList())
-      //TODO: add support for optional parameters
+        //TODO: add support for optional parameters
         ..body = body,
     );
 
     //TODO: what if we return only imports and method body ??
 
     return code.Library(
-          (b) => b
+      (b) => b
         ..directives = ListBuilder([Directive.import("dart:math")])
         ..body = ListBuilder([
           code.Mixin(
-                (b) => b
-            //TODO: name should be generated outside
+            (b) => b
+              //TODO: name should be generated outside
               ..name = "\$${component.name}_${annotationName}_${method.name}"
               ..on = code.refer(component.name)
               ..methods = ListBuilder([mixinMethod]),
@@ -146,7 +147,7 @@ class ParamLoggedGenerator extends AnnotatedMethodGenerator {
 
   Parameter _buildParameter(ParameterElement e) {
     return code.Parameter(
-          (b) => b
+      (b) => b
         ..name = e.name
         ..type = code.refer(e.type.getDisplayString(withNullability: true)),
     );

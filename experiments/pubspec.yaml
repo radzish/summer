@@ -13,6 +13,8 @@ dependencies:
   source_gen:
   build_runner_core:
   build_resolvers:
+  summer_core:
+    path: ../summer_core
   example_extensions_lib:
     path: ../example_extensions/example_extensions_lib
 
