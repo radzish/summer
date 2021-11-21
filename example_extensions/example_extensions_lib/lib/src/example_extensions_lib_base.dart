@@ -9,3 +9,9 @@ class ParamLogged {
 }
 
 const paramLogged = ParamLogged._();
+
+class DbQuery {
+  final String query;
+
+  const DbQuery(this.query);
+}

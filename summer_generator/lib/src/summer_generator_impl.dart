@@ -2,11 +2,10 @@ import 'dart:async';
 
 import 'package:analyzer/dart/element/element.dart';
 import 'package:build/build.dart';
+import 'package:collection/collection.dart' show IterableExtension;
 import 'package:glob/glob.dart';
 import 'package:source_gen/source_gen.dart';
 import 'package:summer_generator/summer_generator.dart';
-
-import 'package:collection/collection.dart' show IterableExtension;
 
 class SummerBuilder implements Builder {
   @override
@@ -67,8 +66,9 @@ class SummerBuilder implements Builder {
       (component) {
         final name = component.name;
         final implName = '\$${component.name}';
-        final sourceCode = _generateComponentImplDeclaration(component, name, implName, generatedLibraries);
         final dependencies = _resolveComponentDependencies(component);
+        final sourceCode =
+            _generateComponentImplDeclaration(component, name, implName, generatedLibraries, dependencies);
         return _ComponentImplementationResult(name, implName, sourceCode, dependencies);
       },
     );
@@ -79,20 +79,142 @@ class SummerBuilder implements Builder {
     String name,
     String implName,
     Iterable<LibraryElement> generatedLibraries,
+    List<String> dependencies,
   ) {
-    final mixins = _generateComponentImplMixins(component, generatedLibraries);
-    final constructor = _generateComponentImplConstructor(component);
+    if (component.isAbstract) {
+      return _generateAbstractComponentImplDeclaration(component, name, implName, generatedLibraries);
+    } else {
+      return _generateConcreteComponentImplDeclaration(component, name, implName, generatedLibraries, dependencies);
+    }
+  }
+
+  String _generateConcreteComponentImplDeclaration(
+    ClassElement component,
+    String name,
+    String implName,
+    Iterable<LibraryElement> generatedLibraries,
+    List<String> dependencies,
+  ) {
+    final mixins = _generateConcreteComponentImplMixins(component, generatedLibraries);
+    final extending = _resolveExtendingClass(component);
+    final delegatingDependencyFields = _generateDependencyFields(component);
+    final delegatingMethods = _generateDelegatingMethods(component);
+    final implConstructor = _generateComponentImplConstructor(component);
+    final decoratorConstructor = _generateComponentDecoratorConstructor(component);
 
     return '''
-    class $implName extends $name ${mixins.isNotEmpty ? ' with ${mixins.join(', ')}' : ''} {
-      ${constructor.isNotEmpty ? constructor : ''}
+    class $implName extends ${implName}Decorator ${mixins.isNotEmpty ? ' with ${mixins.join(', ')}' : ''} {
+      $implConstructor
+    }
+    
+    abstract class ${implName}Decorator ${extending != null ? 'extends $extending' : ''} implements $name {
+      final $name \$ref;
+      $decoratorConstructor
+      ${delegatingDependencyFields.join('\n\n')}
+      ${delegatingMethods.join('\n\n')}
     }
     ''';
   }
 
-  Iterable<String> _generateComponentImplMixins(ClassElement component, Iterable<LibraryElement> mixinLibraries) =>
+  String? _resolveExtendingClass(ClassElement component) {
+    final superType = component.supertype;
+    if (superType == null) {
+      return null;
+    }
+
+    if (!superType.element.metadata.any((annotation) => componentChecker.isExactly(annotation.element!))) {
+      return superType.getDisplayString(withNullability: true);
+    }
+
+    return '\$${superType.getDisplayString(withNullability: true)}';
+  }
+
+  String _generateAbstractComponentImplDeclaration(
+    ClassElement component,
+    String name,
+    String implName,
+    Iterable<LibraryElement> generatedLibraries,
+  ) {
+    final concreteMethodsMixins = _generateConcreteComponentImplMixins(component, generatedLibraries);
+    final abstractMethodsMixins = _generateAbstractComponentImplMixins(component, generatedLibraries);
+    final extending = _resolveExtendingClass(component);
+    final delegatingDependencyFields = _generateDependencyFields(component);
+    final delegatingMethods = _generateDelegatingMethods(component);
+    final defaultImplConstructor = _generateComponentDefaultImplConstructor(component);
+    final implConstructor = _generateComponentImplConstructor(component);
+    final decoratorConstructor = _generateComponentDecoratorConstructor(component, '\$${component.name}DefaultImpl');
+
+    return '''
+    class $implName extends ${implName}Decorator ${concreteMethodsMixins.isNotEmpty ? ' with ${concreteMethodsMixins.join(', ')}' : ''} {
+      $implConstructor
+    }
+    
+    class \$${name}DefaultImpl extends $name ${abstractMethodsMixins.isNotEmpty ? ' with ${abstractMethodsMixins.join(', ')}' : ''} {
+      $defaultImplConstructor
+    }
+    
+    abstract class ${implName}Decorator ${extending != null ? 'extends $extending' : ''} implements $name {
+      final $name \$ref;
+      $decoratorConstructor
+      ${delegatingDependencyFields.join('\n\n')}
+      ${delegatingMethods.join('\n\n')}
+    }
+    ''';
+  }
+
+  Iterable<String> _generateDependencyFields(ClassElement component) => component.fields.map(_generateDependencyField);
+
+  String _generateDependencyField(FieldElement field) {
+    String? getter;
+    String? setter = "";
+
+    if (field.getter != null) {
+      final declaration = field.getter!.getDisplayString(withNullability: true);
+      final name = field.getter!.name;
+      getter = '''
+        @override
+        $declaration => \$ref.$name;
+      ''';
+    }
+
+    if (field.setter != null) {
+      final name = field.name;
+      setter = '''
+        @override
+        void set $name(${_parameterDeclarations(field.setter!)}) => \$ref.$name = ${_parameterNames(field.setter!)};
+      ''';
+    }
+
+    return '''
+      $getter
+      $setter
+    ''';
+  }
+
+  Iterable<String> _generateDelegatingMethods(ClassElement component) =>
+      component.methods.map(_generateDelegatingMethod);
+
+  String _generateDelegatingMethod(MethodElement method) {
+    final declaration = method.getDisplayString(withNullability: true);
+    final name = method.name;
+    return '''
+      @override
+      $declaration => \$ref.$name(${_parameterNames(method)});
+    ''';
+  }
+
+  Iterable<String> _generateConcreteComponentImplMixins(
+          ClassElement component, Iterable<LibraryElement> mixinLibraries) =>
       component.methods
           .where((method) => method.metadata.isNotEmpty)
+          .where((method) => !method.isAbstract)
+          .expand((method) => _generateMethodMixins(component, method, mixinLibraries));
+
+  Iterable<String> _generateAbstractComponentImplMixins(
+          ClassElement component, Iterable<LibraryElement> mixinLibraries) =>
+      component.methods
+          .where((method) => method.metadata.isNotEmpty)
+          .where((method) => !method.isAbstract)
           .expand((method) => _generateMethodMixins(component, method, mixinLibraries));
 
   Iterable<String> _generateMethodMixins(
@@ -148,10 +270,45 @@ class SummerBuilder implements Builder {
     return '\$${component.name}(${_parameterDeclarations(constructor)}): super(${_parameterNames(constructor)});';
   }
 
-  String _parameterDeclarations(ConstructorElement constructor) =>
+  String _generateComponentDefaultImplConstructor(ClassElement component) {
+    final constructors = component.constructors;
+
+    //TODO: should we support multiple constructors
+    if (constructors.length > 1) {
+      throw UnsupportedError("component must have one constructor max");
+    }
+
+    final constructor = constructors.first;
+
+    // default constructor - we do not need to generate anything
+    if (constructor.parameters.isEmpty) {
+      return '';
+    }
+
+    //TODO: should we support named constructors?
+    return '\$${component.name}DefaultImpl(${_parameterDeclarations(constructor)}): super(${_parameterNames(constructor)});';
+  }
+
+  String _generateComponentDecoratorConstructor(ClassElement component, [String? refConstructorName]) {
+    final constructors = component.constructors;
+
+    //TODO: should we support multiple constructors
+    if (constructors.length > 1) {
+      throw UnsupportedError("component must have one constructor max");
+    }
+
+    final constructor = constructors.first;
+
+    final superConstructor = component.supertype?.constructors.first;
+
+    //TODO: should we support named constructors?
+    return '\$${component.name}Decorator(${_parameterDeclarations(constructor)}): \$ref = ${refConstructorName ?? component.name}(${_parameterNames(constructor)}), super(${superConstructor != null ? _parameterNames(superConstructor) : ''});';
+  }
+
+  String _parameterDeclarations(ExecutableElement constructor) =>
       constructor.parameters.map((parameter) => parameter.getDisplayString(withNullability: true)).join(', ');
 
-  String _parameterNames(ConstructorElement constructor) =>
+  String _parameterNames(ExecutableElement constructor) =>
       constructor.parameters.map((parameter) => parameter.name).join(', ');
 
   List<String> _resolveComponentDependencies(ClassElement component) {
