@@ -2,13 +2,19 @@ import 'dart:async';
 
 import 'package:analyzer/dart/element/element.dart';
 import 'package:build/build.dart';
-import 'package:built_collection/built_collection.dart';
-import 'package:code_builder/code_builder.dart' as code;
 import 'package:source_gen/source_gen.dart';
 import 'package:summer_generator/summer_generator.dart';
 
+class AnnotatedMethodGeneratorResult {
+  final List<String> imports;
+  final String methodBody;
+
+  AnnotatedMethodGeneratorResult({this.imports = const [], this.methodBody = ""});
+}
+
 abstract class AnnotatedMethodGenerator {
-  FutureOr<code.Library> generate(ClassElement component, MethodElement method, String annotationName);
+  FutureOr<AnnotatedMethodGeneratorResult> generate(
+      ClassElement component, MethodElement method, String annotationName);
 }
 
 class SummerAnnotationBuilder<T> implements Builder {
@@ -56,23 +62,18 @@ class SummerAnnotationBuilder<T> implements Builder {
       final component = method.enclosingElement as ClassElement;
       imports.add("import '${component.library.librarySource.uri}';");
 
-      // adding generated library imports and code
-      var mixinLibrary = await _generator.generate(component, method, _name);
-
-      // adding annotation to mixin
+      // adding import for mixin annotation
       final annotation = method.metadata
           .firstWhere((annotation) => annotationChecker.isExactlyType(annotation.computeConstantValue()!.type!));
-      final annotationValue = annotation.toSource();
-      final pureAnnotation = annotationValue.substring(1); // removing @
-      mixinLibrary = mixinLibrary.rebuild(
-        (lb) => lb.body.map((mixin) => (mixin as code.Mixin).rebuild(
-            (mb) => mb..annotations = ListBuilder([...mb.annotations.build(), code.refer(pureAnnotation).expression]))),
-      );
-      imports.add("import '${annotation.element!.library!.librarySource.uri}';");
+      imports.add("import '${_resolveAnnotationUri(annotation)}';");
 
-      imports.addAll(mixinLibrary.directives.map((directive) => directive.accept(code.DartEmitter()).toString()));
+      // adding generated library imports and code
+      final mixinResult = await _generator.generate(component, method, _name);
 
-      codeParts.addAll(mixinLibrary.body.map((body) => body.accept(code.DartEmitter()).toString()));
+      // adding imports required by generated method body
+      imports.addAll([for (final importUrl in mixinResult.imports) "import '$importUrl';"]);
+
+      codeParts.add(_generateMixin(component, method, annotation, mixinResult.methodBody));
     }
 
     var sourceCode = {...imports, ...codeParts}.join("\n\n");
@@ -80,4 +81,24 @@ class SummerAnnotationBuilder<T> implements Builder {
 
     await buildStep.writeAsString(outputId, sourceCode);
   }
+
+  //TODO: Current implementation resolves src - library.
+  //Need to find a way to resolve actual package library
+  Uri _resolveAnnotationUri(ElementAnnotation annotation) => annotation.element!.librarySource!.uri;
+
+  String _generateMixin(ClassElement component, MethodElement method, ElementAnnotation annotation, String methodBody) {
+    return '''
+    ${annotation.toSource()}
+    mixin \$${component.name}_${annotation.element!.name!}_${method.name} on ${component.name} {
+      @override
+      ${method.returnType.getDisplayString(withNullability: true)} ${method.name}(${_buildMethodParameters(method)}) {
+        $methodBody
+      }
+    }
+    ''';
+  }
+
+  String _buildMethodParameters(MethodElement method) => method.parameters.map(_buildMethodParameter).join(', ');
+
+  String _buildMethodParameter(ParameterElement parameter) => parameter.getDisplayString(withNullability: true);
 }
