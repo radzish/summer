@@ -6,6 +6,12 @@ version: 1.0.0
 environment:
   sdk: '>=2.14.4 <3.0.0'
 
+dependencies:
+  summer_core:
+    path: ../../summer_core
+  shelf:
+  shelf_router:
+
 dev_dependencies:
   lints: ^1.0.0
   test: ^1.16.0

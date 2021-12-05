@@ -5,7 +5,7 @@ builders:
     builder_factories: ["timedBuilder"]
     build_extensions: {"^lib/{{}}.dart": ["lib/generated/{{}}.timed.dart"]}
     build_to: source
-    auto_apply: root_package
+    auto_apply: all_packages
     runs_before: ["summer"]
 
   paramLoggedBuilder:
@@ -13,5 +13,5 @@ builders:
     builder_factories: ["paramLoggedBuilder"]
     build_extensions: {"^lib/{{}}.dart": ["lib/generated/{{}}.paramLogged.dart"]}
     build_to: source
-    auto_apply: root_package
+    auto_apply: all_packages
     runs_before: ["summer"]

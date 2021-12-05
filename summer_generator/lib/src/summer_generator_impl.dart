@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:analyzer/dart/element/element.dart';
 import 'package:build/build.dart';
+import 'package:build_runner_core/build_runner_core.dart';
 import 'package:collection/collection.dart' show IterableExtension;
 import 'package:glob/glob.dart';
 import 'package:source_gen/source_gen.dart';
@@ -10,16 +11,26 @@ import 'package:summer_generator/summer_generator.dart';
 class SummerBuilder implements Builder {
   @override
   Future build(BuildStep buildStep) async {
-    final assets = await buildStep
-        .findAssets(Glob("lib/**"))
-        //TODO seems like IDEA appends '~' in the process of updating file in 'watch' mode - need to skip those
-        //think of better approach
-        .where((asset) => !asset.path.endsWith("~"))
-        .toList();
-    final libraries = await Future.wait(assets.map((asset) => buildStep.resolver.libraryFor(asset)));
+    // final assets = await buildStep
+    //     .findAssets(Glob("lib/**"))
+    //     //TODO seems like IDEA appends '~' in the process of updating file in 'watch' mode - need to skip those
+    //     //think of better approach
+    //     .where((asset) => !asset.path.endsWith("~"))
+    //     .toList();
+    //
 
-    final componentLibraries =
-        libraries.where((library) => LibraryReader(library).annotatedWith(componentChecker).isNotEmpty);
+    final componentLibraries = <LibraryElement>{};
+
+    final graph = await PackageGraph.forThisPackage();
+    final rootComponentLibraries = await findPackageComponentLibraries(graph, buildStep);
+    componentLibraries.addAll(rootComponentLibraries);
+
+    final packages = graph.allPackages;
+
+    for (final package in packages.keys) {
+      final packageComponentLibraries = await findPackageComponentLibraries(graph, buildStep, package: package);
+      componentLibraries.addAll(packageComponentLibraries);
+    }
 
     final generatedAssets = await buildStep.findAssets(Glob("lib/generated/**")).toList();
     final generatedLibraries = await Future.wait(generatedAssets.map((asset) => buildStep.resolver.libraryFor(asset)));
@@ -29,20 +40,51 @@ class SummerBuilder implements Builder {
       ..._generateImports(generatedLibraries),
       ..._generateImports(componentLibraries),
     };
-    final components = await _generateComponentImpls(libraries, generatedLibraries);
+    final components = await _generateComponentImpls(componentLibraries, generatedLibraries);
     final summerInstance = _generateSummerInstance(components);
 
     var code = '''
     ${imports.join('\n')}
-    
+
     ${components.map((component) => component.implCode).join('\n\n')}
-    
+
     $summerInstance
     ''';
 
     code = formatter.format(code);
 
     await buildStep.writeAsString(AssetId(buildStep.inputId.package, 'lib/generated/summer.dart'), code);
+  }
+
+  Future<Iterable<LibraryElement>> findPackageComponentLibraries(
+    PackageGraph graph,
+    BuildStep buildStep, {
+    String? package,
+  }) async {
+
+    try {
+      final assetReader = FileBasedAssetReader(graph);
+      final assets = await assetReader
+          .findAssets(Glob('lib/**'), package: package)
+          //TODO seems like IDEA appends '~' in the process of updating file in 'watch' mode - need to skip those
+          .where((asset) => !asset.path.endsWith('~'))
+          .toList();
+
+      if(package != 'example_extensions_lib' && package != 'example_client') {
+        return [];
+      }
+
+      print("!!!!!!!!!!!!!!!!!! ${package}");
+
+
+      final libraries = await Future.wait(assets.map((asset) => buildStep.resolver.libraryFor(asset)));
+
+      final packageComponentLibraries =
+          libraries.where((library) => LibraryReader(library).annotatedWith(componentChecker).isNotEmpty);
+      return packageComponentLibraries;
+    } catch (e) {
+      return [];
+    }
   }
 
   @override

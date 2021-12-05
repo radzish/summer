@@ -10,6 +10,14 @@ class ComponentA {
 }
 
 @component
+class ComponentAC {
+  @timed
+  void doComponentAJob() {
+    print('component A job');
+  }
+}
+
+@component
 class ComponentB {
   final ComponentA componentA;
   String? simpleField;
@@ -46,5 +54,20 @@ abstract class ComponentD extends ComponentC {
   ComponentD(ComponentA componentA) : super(componentA);
 
   @DbQuery("select * from table where id = @id")
-  void doComponentDJob(String id) {}
+  void doComponentDJob(String id);
+}
+
+@component
+class UserApi {
+  @Get("/user/<id>")
+  User getUserById(String id) {
+    // example: find user in db and return
+    return User("John Doe");
+  }
+}
+
+class User {
+  final String name;
+
+  User(this.name);
 }
