@@ -214,7 +214,7 @@ class SummerBuilder implements Builder {
           ClassElement component, Iterable<LibraryElement> mixinLibraries) =>
       component.methods
           .where((method) => method.metadata.isNotEmpty)
-          .where((method) => !method.isAbstract)
+          .where((method) => method.isAbstract)
           .expand((method) => _generateMethodMixins(component, method, mixinLibraries));
 
   Iterable<String> _generateMethodMixins(

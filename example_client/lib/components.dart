@@ -46,5 +46,5 @@ abstract class ComponentD extends ComponentC {
   ComponentD(ComponentA componentA) : super(componentA);
 
   @DbQuery("select * from table where id = @id")
-  void doComponentDJob(String id) {}
+  void doComponentDJob(String id);
 }

@@ -1,5 +1,13 @@
 builders:
 
+  dbQueryBuilder:
+    import: "package:example_extensions_generator/example_extensions_generator.dart"
+    builder_factories: ["dbQueryBuilder"]
+    build_extensions: {"^lib/{{}}.dart": ["lib/generated/{{}}.db_query.dart"]}
+    build_to: source
+    auto_apply: root_package
+    runs_before: ["summer"]
+
   timedBuilder:
     import: "package:example_extensions_generator/example_extensions_generator.dart"
     builder_factories: ["timedBuilder"]
