@@ -17,5 +17,3 @@ const component = Component._();
 class Application {
   const Application._();
 }
-
-const application = Application._();
